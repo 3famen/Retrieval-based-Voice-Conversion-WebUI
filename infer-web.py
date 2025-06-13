@@ -2,6 +2,8 @@ import os
 import sys
 from dotenv import load_dotenv
 
+from tqdm import trange
+
 now_dir = os.getcwd()
 sys.path.append(now_dir)
 load_dotenv()
@@ -62,7 +64,7 @@ if config.dml == True:
         return res
 
     fairseq.modules.grad_multiply.GradMultiply.forward = forward_dml
-i18n = I18nAuto()
+i18n = I18nAuto(language='zh_CN')
 logger.info(i18n)
 # 判断是否有能用来训练和加速推理的N卡
 ngpu = torch.cuda.device_count()
@@ -615,6 +617,7 @@ def click_train(
 # but4.click(train_index, [exp_dir1], info3)
 def train_index(exp_dir1, version19):
     # exp_dir = "%s/logs/%s" % (now_dir, exp_dir1)
+    logger.info("begin train index")
     exp_dir = "logs/%s" % (exp_dir1)
     os.makedirs(exp_dir, exist_ok=True)
     feature_dir = (
@@ -653,36 +656,43 @@ def train_index(exp_dir1, version19):
             )
         except:
             info = traceback.format_exc()
+            logger.error("big_npy kmeans error. see info below.")
             logger.info(info)
             infos.append(info)
             yield "\n".join(infos)
 
     np.save("%s/total_fea.npy" % exp_dir, big_npy)
     n_ivf = min(int(16 * np.sqrt(big_npy.shape[0])), big_npy.shape[0] // 39)
-    infos.append("%s,%s" % (big_npy.shape, n_ivf))
-    yield "\n".join(infos)
+    # infos.append("%s,%s" % (big_npy.shape, n_ivf))
+    # yield "\n".join(infos)
+    logger.info(f"npy done, shape: {big_npy.shape}; start traning")
     index = faiss.index_factory(256 if version19 == "v1" else 768, "IVF%s,Flat" % n_ivf)
     # index = faiss.index_factory(256if version19=="v1"else 768, "IVF%s,PQ128x4fs,RFlat"%n_ivf)
-    infos.append("training")
-    yield "\n".join(infos)
+    # infos.append("training")
+    # yield "\n".join(infos)
     index_ivf = faiss.extract_index_ivf(index)  #
     index_ivf.nprobe = 1
     index.train(big_npy)
+    logger.info("to write trained_*.index")
+    # infos.append("write trained index. to build added index")
+    # yield "\n".join(infos)
     faiss.write_index(
         index,
         "%s/trained_IVF%s_Flat_nprobe_%s_%s_%s.index"
         % (exp_dir, n_ivf, index_ivf.nprobe, exp_dir1, version19),
     )
-    infos.append("adding")
-    yield "\n".join(infos)
+    logger.info("trained_*.index build done")
+    # infos.append("adding")
+    # yield "\n".join(infos)
     batch_size_add = 8192
-    for i in range(0, big_npy.shape[0], batch_size_add):
+    for i in trange(0, big_npy.shape[0], batch_size_add):
         index.add(big_npy[i : i + batch_size_add])
     faiss.write_index(
         index,
         "%s/added_IVF%s_Flat_nprobe_%s_%s_%s.index"
         % (exp_dir, n_ivf, index_ivf.nprobe, exp_dir1, version19),
     )
+    logger.info("added_*.index build done")
     infos.append(
         "成功构建索引 added_IVF%s_Flat_nprobe_%s_%s_%s.index"
         % (n_ivf, index_ivf.nprobe, exp_dir1, version19)
@@ -1612,7 +1622,7 @@ with gr.Blocks(title="RVC WebUI") as app:
         app.queue(concurrency_count=511, max_size=1022).launch(share=True)
     else:
         app.queue(concurrency_count=511, max_size=1022).launch(
-            server_name="0.0.0.0",
+            # server_name="0.0.0.0",
             inbrowser=not config.noautoopen,
             server_port=config.listen_port,
             quiet=True,
